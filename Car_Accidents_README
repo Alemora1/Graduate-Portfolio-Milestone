@@ -1,1 +1,37 @@
 IST 707 (Fall 2020 - October)
+Final Project
+
+Software Used:
+
+-Python
+-R and R-studio
+
+
+Libraries Used:
+
+Python:
+-Pandas
+-Numpy
+-Matplotlib
+-Seaborn
+-SKLearn
+
+R:
+-tidyverse
+-ggmap
+-magrittr
+-zoo
+-zipcode
+-viridis
+-rgdal
+-arules
+-arulesViz
+-kernlab
+-e1071
+-caret
+-yardstick
+-grid
+-gridExtra
+-FactoMineR
+
+
