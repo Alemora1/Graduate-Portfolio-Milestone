@@ -1,0 +1,541 @@
+
+##Read the file using the read.csv() function.  
+```{r setup, include=FALSE}
+#Import Data under the variable "Accidents"
+knitr::opts_chunk$set(echo = TRUE)
+setwd("D:/Downloads")
+Accidents <- read.csv("US_Accidents_June20.csv")
+```  
+
+# Call Libraries for R needed for analysis
+```{r include=FALSE, echo=TRUE, warning=FALSE}
+library(tidyverse)
+library(ggmap)
+library(magrittr)
+library(zoo)
+library(zipcode)
+library(viridis)
+library(rgdal)
+library(arules)
+library(arulesViz)
+library(kernlab)
+library(e1071)
+library(caret)
+library(yardstick)
+library(grid)
+library(gridExtra)
+library(FactoMineR)
+```
+
+### About the Data and Preprocessing{.css_class}   
+```{r, include=TRUE , echo=TRUE}
+#View dimensions and observation count
+dim(Accidents)
+```  
+
+```{r , include=TRUE , echo=TRUE}
+#View Structure of data to look at variables and types
+str(Accidents)
+```  
+ 
+```{r}
+## Checking for NA columns
+sapply(Accidents, function(x) sum(is.na(x)))
+```  
+```{r, include=TRUE, echo=TRUE}
+## Checking columns to see if they are valid to keep
+length(which(Accidents$Turning_Loop == "False"))
+length(which(Accidents$Nautical_Twilight == "Night"))
+length(which(Accidents$Source == "MapQuest"))
+length(which(Accidents$TMC == "201"))
+length(which(Accidents$Amenity == "False"))
+length(which(Accidents$Bump == "False"))
+length(which(Accidents$Crossing == "False"))
+length(which(Accidents$Give_Way == "False"))
+length(which(Accidents$Junction == "True"))
+length(which(Accidents$No_Exit == "False"))
+length(which(Accidents$Railway == "False"))
+length(which(Accidents$Roundabout == "False"))
+length(which(Accidents$Station == "False"))
+length(which(Accidents$Stop == "False"))
+length(which(Accidents$Traffic_Calming == "False"))
+length(which(Accidents$Traffic_Signal == "False"))
+```  
+ 
+```{r, include=TRUE, echo=TRUE}
+##Dropping unnecessary columns
+drop <- c('Source', 'End_Lat', 'End_Lng', 'Number', 'Street', 'Airport_Code', 'Weather_Timestamp', 'Civil_Twilight', 'Nautical_Twilight', 'Astronomical_Twilight')
+Accidents %<>% select(-one_of(drop))
+Accidents$Severity %<>% as.factor()
+##Replacing NAs
+ok <- sapply(Accidents, is.numeric)
+Accidents[ok] <- lapply(Accidents[ok], na.aggregate)
+```  
+# EDA  
+
+```{r, include=TRUE, echo=TRUE}
+## Exploring physical environment variables  
+cols <- c('Traffic_Signal', 'Traffic_Calming', 'Stop', 'Station', 'Roundabout', 'Railway', 'No_Exit', 'Junction', 'Give_Way', 'Crossing', 'Bump', 'Amenity')
+phys_env <- Accidents %>% select(one_of(cols))
+
+x <- data.frame(Traffic_Signal = 0,
+                Traffic_Calming = 0,
+                Stop = 0,
+                Station = 0,
+                Roundabout = 0,
+                Railway = 0,
+                No_Exit = 0,
+                Junction = 0,
+                Give_Way = 0,
+                Crossing = 0,
+                Bump = 0,
+                Amenity = 0)
+x$Traffic_Signal <- sum(phys_env$Traffic_Signal == 'True')
+x$Traffic_Calming = sum(phys_env$Traffic_Calming == 'True')
+x$Stop = sum(phys_env$Stop == 'True')
+x$Station = sum(phys_env$Station == 'True')
+x$Roundabout = sum(phys_env$Roundabout == 'True')
+x$Railway = sum(phys_env$Railway == 'True')
+x$No_Exit = sum(phys_env$No_Exit == 'True')
+x$Junction = sum(phys_env$Junction == 'True')
+x$Give_Way = sum(phys_env$Give_Way == 'True')
+x$Crossing = sum(phys_env$Crossing == 'True')
+x$Bump = sum(phys_env$Bump == 'True')
+x$Amenity = sum(phys_env$Amenity == 'True')
+
+x <- x %>%
+  pivot_longer(
+    cols = c(Traffic_Signal, Traffic_Calming, Stop, Station, Roundabout, Railway, No_Exit,
+             Junction, Give_Way, Crossing, Bump, Amenity),
+    names_to = "measure",
+    values_to = "value"
+  )
+x$prop <- x$value / length(phys_env$Traffic_Signal) *100
+x %<>% arrange(desc(prop))
+x
+```
+
+```{r, include=TRUE, echo=TRUE}
+#Plot Proportions of Accidents by Environment Variable
+Plot1 <- ggplot(x)  + aes(x = reorder(measure, -prop) , y = prop) + geom_bar(stat = "identity", width = .5, fill="orange")
+Plot1 <- Plot1 + labs(title="Proportion of Accidents by Environment Variable", caption = "source: US Accidents")
+Plot1 <- Plot1 + theme(axis.text.x = element_text(angle=65, vjust = 0.6)) + ylim(0, 20)
+Plot1
+```  
+
+## Exploring Accidents by Time of Day  
+```{r, include=TRUE, echo=TRUE, warning=FALSE}
+Time <- Accidents %>%
+  group_by(Sunrise_Sunset) %>%
+  summarise(n = n()) %>%
+  mutate(freq = paste0(round(100 * n/sum(n), 0), "%"))
+Time <- subset(Time, n != 115)
+Time
+```
+
+```{r}
+#Plot Time of Day Percentages
+Plot2 <- ggplot(Time)  + aes(x = Sunrise_Sunset, y = freq) + geom_bar(stat = "identity", width = .5, fill="purple")
+Plot2 <- Plot2 + labs(title="Proportion of Accidents by Time of Day", caption = "source: US Accidents")
+Plot2
+```
+
+The data can be explored by states within the country.
+```{r, include=TRUE, echo=TRUE, warning=FALSE}
+Time_s <- Accidents %>%
+  group_by(State, Sunrise_Sunset) %>%
+  summarise(n = n()) %>%
+  mutate(freq = round(100 * n/sum(n), 0))
+Time_s
+```
+
+```{r, include=TRUE, echo=TRUE}
+#Plot the states and their Time of Day Proportions
+Plot3 <- ggplot(Time_s)  + aes(x = State, y = freq, fill = Sunrise_Sunset) + geom_bar(stat = "identity", width = .5)
+Plot3 <- Plot3 + labs(title="Proportion of Accidents by State and Time of Day", caption = "source: US Accidents")
+Plot3 <- Plot3 + theme(axis.text.x = element_text(angle=65, vjust = 0.6)) 
+Plot3
+```
+
+## Exploring Accident duration  
+```{r, include=TRUE, echo=TRUE}
+###Create a DataFrame to calculate the duration of Accidents based on their start time and end time.
+AccDuration <- data.frame(Accidents$Start_Time, Accidents$End_Time, Accidents$State)
+colnames(AccDuration)[1:3] <- c("Start", "End", "State")
+###Check the DataFrames' "AccDuration" structure for variable types.
+str(AccDuration)
+```
+```{r, include=TRUE, echo=TRUE}
+###Convert data types of the start and end times to POSIXct to calculate time in seconds.
+AccDuration$Start <- as.POSIXct(AccDuration$Start)
+AccDuration$End <- as.POSIXct(AccDuration$End)
+```
+###Calculate duration with subtraction and setting the place value to 5.
+##Add a column to "AccDuration" called "Duration" to show the value.
+```{r, include=TRUE, echo=TRUE}
+options(digits = 5)
+AccDuration["Duration"] <- (AccDuration$End - AccDuration$Start)
+
+###In a new column convert the seconds to minutes.
+AccDuration["Duration in Minutes"] <- (AccDuration$End - AccDuration$Start) / 60
+```
+###Aggregate the data into a new DataFrame to show the average duration of accidents seperated by state.
+###Change the column names for better readability
+```{r, include=TRUE, echo=TRUE}
+StateAVG <- aggregate(AccDuration$`Duration in Minutes`, by = list(Category=AccDuration$State), FUN = mean)
+colnames(StateAVG)[2] <- c("StateAVGDuration")
+colnames(StateAVG)[1] <- c("State")
+```
+###Change the values to numeric for visualization and remove states Iowa and Indiana
+```{r, include=TRUE, echo=TRUE}
+StateAVG$StateAVGDuration <- as.numeric(StateAVG$StateAVGDuration)
+StateAVG2 <- StateAVG[-11:-12,]
+```
+###Create a barplot to showcase average accident times per state.
+```{r, include=TRUE, echo=TRUE}
+Plot4 <- ggplot(StateAVG2)  + aes(x = State , y = StateAVGDuration) + geom_bar(stat = "identity", width = .5, fill="blue")
+Plot4 <- Plot4 + labs(title="Average Accident Duration", subtitle = "by State (IA: 1210.4 and ID: 1336.9) are too big for scale", caption = "source: US Accidents")
+Plot4 <- Plot4 + theme(axis.text.x = element_text(angle=65, vjust = 0.6)) + ylim(0, 350)
+```
+###View plot
+```{r,include=TRUE}
+Plot4
+```
+
+```{r, include=TRUE, echo=TRUE}
+#Data frame containing, latitude, longitude, severity, zipcodes, and states
+AccSeverity <- data.frame(Accidents$Start_Lat, Accidents$Start_Lng, Accidents$Severity, Accidents$Zipcode ,Accidents$State)
+colnames(AccSeverity)[1:5] <- c("StartLat", "StartLng", "Severity", "Zipcode", "state")
+```
+##Import zipcode data fomr library and clean AccSeverity zipcode based on that data.
+```{r, include=TRUE, echo=TRUE}
+data("zipcode")
+AccSeverity$Zipcode <- clean.zipcodes(AccSeverity$Zipcode)
+```
+##Change zip column name in DF zipcode to"Zipcode"
+```{r, include=TRUE, echo=TRUE}
+colnames(zipcode)[1] <- c("Zipcode")
+```
+##Merge zipcode DF and AccSeverity DF
+```{r, include=TRUE, echo=TRUE}
+AccSeverity <- merge(AccSeverity, zipcode, by ="Zipcode")
+str(AccSeverity)
+```
+##Delete Duplicate columns
+```{r, include=TRUE, echo=TRUE}
+AccSeverity <- AccSeverity[,-7:-9]
+AccSeverity$Severity <- as.numeric(AccSeverity$Severity)
+```
+##Form a "SevMed" DataFrame with median severity and state
+```{r, include=TRUE, echo=TRUE}
+SevMed <- aggregate(AccSeverity$Severity, by = list(Category=AccSeverity$state.x), FUN = median)
+```
+##Change column names
+##Change values to numeric
+```{r, include=TRUE, echo=TRUE}
+colnames(SevMed)[1:2] <- c("State", "SeverityMedian")
+options(digits = 4)
+SevMed$SeverityMedian <- as.numeric(SevMed$SeverityMedian)
+```
+##Match the given state abbreviations with full state names and convert to lowercase for map readibility.
+```{r,include=TRUE, echo=TRUE}
+SevMed$StateName <- state.name[match(SevMed$State, state.abb)]
+SevMed$StateName <- tolower(SevMed$StateName)
+```
+###Create US map showing severity of accidents based on state
+##Make a US state DataFrame to use for mapping
+```{r, include=TRUE, echo=TRUE}
+US <- map_data("state")
+```
+##Create Map for Median
+```{r,include=TRUE, echo=TRUE}
+MapSeverity <- ggplot(SevMed, aes(map_id=SevMed$StateName)) + geom_map(map=US, aes(fill=SevMed$SeverityMedian)) + expand_limits(x=US$long, y=US$lat)
+MapSeverity <- MapSeverity + ggtitle("Median Car Accident Severity(by State)") + guides(fill=guide_legend(title="Severity Median")) + theme(plot.title = element_text(hjust=0.5))
+MapSeverity <- MapSeverity + scale_fill_viridis(option = "magma", direction = -1)
+
+```
+##Call Map
+```{r, include=TRUE, warning=FALSE}
+MapSeverity 
+```
+A new Data frame must be made for mean as the past variables have been modified.
+#Create a DataFrame to map average severity of cases based on state.
+```{r, include=TRUE, echo=TRUE}
+AccSeverity <- data.frame(Accidents$Start_Lat, Accidents$Start_Lng, Accidents$Severity, Accidents$Zipcode ,Accidents$State)
+colnames(AccSeverity)[1:5] <- c("StartLat", "StartLng", "Severity", "Zipcode", "state")
+```
+##Import zipcode data fomr library and clean AccSeverity zipcode based on that data.
+```{r, include=TRUE, echo=TRUE}
+data("zipcode")
+AccSeverity$Zipcode <- clean.zipcodes(AccSeverity$Zipcode)
+```
+##Change zip column name in DF zipcode to"Zipcode"
+```{r, include=TRUE, echo=TRUE}
+colnames(zipcode)[1] <- c("Zipcode")
+```
+##Merge zipcode DF and AccSeverity DF
+```{r, include=TRUE, echo=TRUE}
+AccSeverity <- merge(AccSeverity, zipcode, by ="Zipcode")
+str(AccSeverity)
+```
+##Delete Duplicate columns
+```{r, include=TRUE, echo=TRUE}
+AccSeverity <- AccSeverity[,-7:-9]
+```
+##Form a "SevAVG" DataFrame with mean severity and state
+```{r, include=TRUE, echo=TRUE}
+SevAvg <- aggregate(AccSeverity$Severity, by = list(Category=AccSeverity$state.x), FUN = mean)
+```
+##Change column names
+##Change values to numeric
+```{r, include=TRUE, echo=TRUE}
+colnames(SevAvg)[1:2] <- c("State", "SeverityAVG")
+options(digits = 4)
+SevAvg$SeverityAVG <- as.numeric(SevAvg$SeverityAVG)
+```
+##Match the given state abbreviations with full state names and convert to lwoercase for map readibility.
+```{r,include=TRUE, echo=TRUE}
+SevAvg$StateName <- state.name[match(SevAvg$State, state.abb)]
+SevAvg$StateName <- tolower(SevAvg$StateName)
+```
+###Create US map showing severity of accidents based on state
+##Make a US state DataFrame to use for mapping
+```{r, include=TRUE, echo=TRUE}
+US <- map_data("state")
+```
+##Create Map for average (mean)
+```{r,include=TRUE, echo=TRUE}
+MapSeverity <- ggplot(SevAvg, aes(map_id=SevAvg$StateName)) + geom_map(map=US, aes(fill=SevAvg$SeverityAVG)) + expand_limits(x=US$long, y=US$lat)
+MapSeverity <- MapSeverity + ggtitle("Average Car Accident Severity(by State)") + guides(fill=guide_legend(title="Severity AVG")) + theme(plot.title = element_text(hjust=0.5))
+MapSeverity <- MapSeverity + scale_fill_viridis(option = "magma", direction = -1)
+
+```
+##Call Map
+```{r, include=TRUE, warning=FALSE}
+MapSeverity 
+```
+
+# Models:
+
+## Association Rule Mining
+
+```{r, include=TRUE, echo=TRUE}
+#Create a Data frame for Association Rule Mining using physical environments and the accident ID itself
+AccEnvData <- data.frame(Accidents$ID, phys_env)
+colnames(AccEnvData)[1] <- "ID"
+#Remove all rows if all environments are FALSE points in data
+AccEnvData <- AccEnvData[!(AccEnvData$Traffic_Signal=="False" & AccEnvData$Traffic_Calming== "False" & AccEnvData$Stop=="False" & AccEnvData$Station == "False" & AccEnvData$Roundabout== "False" & AccEnvData$Railway== "False" & AccEnvData$No_Exit== "False" & phys_env$Junction== "False" & AccEnvData$Give_Way== "False" & AccEnvData$Crossing== "False" & AccEnvData$Bump== "False" & AccEnvData$Amenity== "False"),]
+
+```
+#Data Must be dicretized to use Association Rule Mining
+```{r, include=TRUE, echo=TRUE}
+#Convert all physical environment factors to binary
+AccEnvData[2:13] <- lapply(AccEnvData[2:13],factor)
+str(AccEnvData)
+```
+#Create the Association Rules using the Apriori algorithm with 0.05 support and .90 confidence as parameters.
+```{r, include=TRUE, echo=TRUE, warning=FALSE}
+Accident_rules1 <- apriori(AccEnvData, parameter = list(support = 0.05, confidence = 0.90))
+#Sort the rules based on support
+Accident_rules1 <- sort(Accident_rules1, by = "support")
+Accident_rules1
+```
+```{r, include=TRUE, echo=TRUE}
+#plot Rules using a matrix format to visualize
+plot(Accident_rules1,method="matrix")
+```
+
+```{r, include=TRUE, echo=TRUE}
+#A plot that show the distribution of rules based on support and confidence
+plot(Accident_rules1,method="two-key plot", jitter=0)
+```
+
+```{r, include=TRUE, echo=TRUE}
+inspect(head(sort(Accident_rules1, by = "lift"), 5))
+```
+
+# Naive Bayes  
+
+##Creating a data frame for Naive Bayes
+```{r, include=TRUE, echo=TRUE}
+AccEnvData <- data.frame(Accidents$ID, phys_env)
+colnames(AccEnvData)[1] <- "ID"
+#Add Severity, take out ID
+AccEnvData <- cbind(AccEnvData, Accidents$Severity)
+names(AccEnvData)[14] <- "Severity"
+AccEnvData <- AccEnvData[,-1]
+#Remove all rows if all environments are FALSE points in data
+AccEnvData <- AccEnvData[!(AccEnvData$Traffic_Signal=="False" & AccEnvData$Traffic_Calming== "False" & AccEnvData$Stop=="False" & AccEnvData$Station == "False" & AccEnvData$Roundabout== "False" & AccEnvData$Railway== "False" & AccEnvData$No_Exit== "False" & AccEnvData$Junction== "False" & AccEnvData$Give_Way== "False" & AccEnvData$Crossing== "False" & AccEnvData$Bump== "False" & AccEnvData$Amenity== "False"),]
+#Convert all variables to factors
+AccEnvData[1:13] <- lapply(AccEnvData[1:13],factor)
+```  
+
+##sample AccEnvData set
+```{r, include=TRUE, echo=TRUE}
+#split the whole set and take 4% of the data
+SampleSplit <- sample(nrow(AccEnvData), nrow(AccEnvData)*.04)
+SampleDF <- AccEnvData[SampleSplit,]
+```  
+
+#Holdout 3-fold crossvalidation
+```{r, include=TRUE, echo=TRUE}
+#Create a hold-out variable to split the data
+HoldOutData <- split(sample(1:nrow(SampleDF)), 1:3)
+```
+```{r, include=TRUE, echo=TRUE}
+#Create training and test data sets for models
+##3 sets must be created as there are 3 fold indexes of the data
+##Data can all be put together after all sets are run by the models.
+Acc_Train1 <- SampleDF[-HoldOutData[[1]],]
+Acc_Test1 <- SampleDF[HoldOutData[[1]],]
+Acc_Train2 <- SampleDF[-HoldOutData[[2]],]
+Acc_Test2 <- SampleDF[HoldOutData[[2]],]
+Acc_Train3 <- SampleDF[-HoldOutData[[3]],]
+Acc_Test3 <- SampleDF[HoldOutData[[3]],]
+```
+```{r, include=TRUE, echo=TRUE}
+#Remove test data sets' "ID"
+Nolab_Test1 <- Acc_Test1[-c(13)]
+Nolab_Test2 <- Acc_Test2[-c(13)]
+Nolab_Test3 <- Acc_Test3[-c(13)]
+#Create a label variable
+Labels1 <- Acc_Test1$Severity
+Labels2 <- Acc_Test2$Severity
+Labels3 <- Acc_Test3$Severity
+```
+
+#NB1  
+```{r, include=TRUE, echo=TRUE}
+#Create a Naive Bayes Model using Digit_Train1
+NBAcc1 <- naiveBayes(Acc_Train1$Severity~.,data = Acc_Train1)
+```
+```{r, include=TRUE, echo=TRUE}
+#Use the first model to test on Nolab_Test1
+NB_Predict1 <- predict(NBAcc1, Nolab_Test1)
+```
+#NB2  
+```{r, include=TRUE, echo=TRUE}
+#Create a Naive Bayes Model using Digit_Train2
+NBAcc2 <- naiveBayes(Acc_Train2$Severity~ .,data = Acc_Train2)
+```
+```{r, include=TRUE, echo=TRUE}
+#Use the model to test on Digit_Test2
+NB_Predict2 <- predict(NBAcc2, Nolab_Test2)
+```
+#NB3  
+```{r, include=TRUE, echo=TRUE}
+#Create a Naive Bayes Model using Digit_Train3
+NBAcc3 <- naiveBayes(Acc_Train3$Severity~ .,data = Acc_Train3)
+```
+```{r, include=TRUE, echo=TRUE}
+#Use the model to test on Digit_Test3
+NB_Predict3 <- predict(NBAcc3, Nolab_Test3)
+```
+
+#Add all results together(NB)  
+```{r, include=TRUE, echo=TRUE, warning = FALSE}
+#Combine all Naive Bayes Predictions and Labels
+NBResults <- c(NB_Predict1, NB_Predict2, NB_Predict3)
+NBLabels <- c(Labels1, Labels2, Labels3)
+```
+``` {r, include=TRUE, echo=TRUE}
+#Insert Results into a confusion matrix
+NBCM <- confusionMatrix(as.factor(NBResults), as.factor(NBLabels))
+#Create data frames for visualization
+NBtable <- data.frame(NBCM$table)
+statsNB1 <- data.frame(NBCM$overall)
+statsNB1$NBCM.overall <- round(statsNB1$NBCM.overall, 2)
+#Create heatmap for visualization
+NBPlot <- ggplot(NBtable, aes(x = Prediction, y = Reference, fill = Freq)) + geom_tile()
+#Create a statistic legend for Naive Bayes
+stats1 <- tableGrob(statsNB1)
+#Show original Confusion Matrix
+table(NBResults,NBLabels)
+#Input visuals and statistics legend together
+grid.arrange(NBPlot, stats1, nrow = 1, ncol = 2, top = textGrob("Naive Bayes", gp=gpar(fontsize=25, font=1)))
+```  
+
+#NB Specific(Junction, traffic_signal)
+#NB4
+```{r, include=TRUE, echo=TRUE}
+#Create a Naive Bayes Model using Digit_Train1
+NBAcc4 <- naiveBayes(Acc_Train1$Severity~Junction + Traffic_Signal,data = Acc_Train1)
+```
+```{r, include=TRUE, echo=TRUE}
+#Use the first model to test on Nolab_Test1
+NB_Predict4 <- predict(NBAcc4, Nolab_Test1)
+```
+#NB5
+```{r, include=TRUE, echo=TRUE}
+#Create a Naive Bayes Model using Digit_Train2
+NBAcc5 <- naiveBayes(Acc_Train2$Severity~ Junction + Traffic_Signal, data = Acc_Train2)
+```
+```{r, include=TRUE, echo=TRUE}
+#Use the model to test on Digit_Test2
+NB_Predict5 <- predict(NBAcc5, Nolab_Test2)
+```
+#NB6
+```{r, include=TRUE, echo=TRUE}
+#Create a Naive Bayes Model using Digit_Train3
+NBAcc6 <- naiveBayes(Acc_Train3$Severity~ Junction + Traffic_Signal,data = Acc_Train3)
+```
+```{r, include=TRUE, echo=TRUE}
+#Use the model to test on Digit_Test3
+NB_Predict6 <- predict(NBAcc6, Nolab_Test3)
+```
+#Add all results together(NB)
+```{r, include=TRUE, echo=TRUE, warning=FALSE}
+#Combine all Naive Bayes Predictions and Labels
+NBResults2 <- c(NB_Predict4, NB_Predict5, NB_Predict6)
+NBLabels2 <- c(Labels1, Labels2, Labels3)
+```
+``` {r}
+#Insert Results into a confusion matrix
+NBCM2 <- confusionMatrix(as.factor(NBResults2), as.factor(NBLabels2))
+#Create data frames for visualization
+NBtable2 <- data.frame(NBCM2$table)
+statsNB2 <- data.frame(NBCM2$overall)
+statsNB2$NBCM2.overall <- round(statsNB2$NBCM2.overall, 2)
+#Create heatmap for visualization
+NBPlot2 <- ggplot(NBtable2, aes(x = Prediction, y = Reference, fill = Freq)) + geom_tile()
+#Create a statistic legend for Naive Bayes
+stats2 <- tableGrob(statsNB2)
+#Show original Confusion Matrix
+table(NBResults2,NBLabels2)
+#Input visuals and statistics legend together
+grid.arrange(NBPlot2, stats2, nrow = 1, ncol = 2, top = textGrob("Naive Bayes", gp=gpar(fontsize=25, font=1)))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
